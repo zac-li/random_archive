@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Raiden III Inspired Game - Mars Edition</title>
+    <style>
+        body { margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh; background: #111; }
+        canvas { border: 1px solid #fff; }
+        #ui { position: absolute; top: 10px; left: 10px; color: white; font-family: Arial, sans-serif; }
+        #pauseMenu { 
+            position: absolute; 
+            top: 50%; 
+            left: 50%; 
+            transform: translate(-50%, -50%); 
+            background: rgba(0, 0, 0, 0.8); 
+            padding: 20px; 
+            color: white; 
+            text-align: center; 
+            display: none; 
+        }
+        #pauseMenu button { margin: 5px; padding: 5px 10px; }
+    </style>
+</head>
+<body>
+    <div id="ui">Score: 0 | Lives: 3 | High Score: 0 | Press Shift to Shoot</div>
+    <div id="pauseMenu">
+        <h2>Paused</h2>
+        <button onclick="resumeGame()">Resume</button><br>
+        <button onclick="restartGame()">Restart</button><br>
+        <button onclick="quitGame()">Quit</button>
+    </div>
+    <canvas id="gameCanvas" width="600" height="800"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const ui = document.getElementById('ui');
+        const pauseMenu = document.getElementById('pauseMenu');
+
+        // Game Assets
+        const playerImg = new Image();
+        playerImg.src = 'https://opengameart.org/sites/default/files/ship_0.png';
+        const enemyImg = new Image();
+        enemyImg.src = 'https://opengameart.org/sites/default/files/enemy_0.png';
+        const heavyEnemyImg = new Image();
+        heavyEnemyImg.src = '/Users/zacli/Downloads/HEIF Image.png';
+        const bulletImg = new Image();
+        bulletImg.src = 'https://opengameart.org/sites/default/files/bullet_0.png';
+        const backgroundImg = new Image();
+        backgroundImg.src = '/Users/zacli/Downloads/IMG_0206.JPG'; // New Mars surface image
+
+        // Game State
+        let player = { x: canvas.width / 2 - 25, y: canvas.height - 60, width: 50, height: 50, speed: 4, lives: 3, color: 'blue' };
+        let bullets = [];
+        let enemies = [];
+        let score = 0;
+        let highScore = 0;
+        let level = 1;
+        let gameRunning = false;
+        let paused = false;
+        let lastShot = 0;
+        const fireRate = 200;
+        let backgroundY = 0;
+        const backgroundSpeed = 1;
+
+        // Keyboard Controls
+        const keys = { w: false, a: false, s: false, d: false, shift: false };
+        document.addEventListener('keydown', (e) => {
+            const key = e.key.toLowerCase();
+            if (key === 'shift') keys.shift = true;
+            else if (key in keys) keys[key] = true;
+            if (key === 'p') togglePause();
+            console.log('Key pressed:', e.key);
+        });
+        document.addEventListener('keyup', (e) => {
+            const key = e.key.toLowerCase();
+            if (key === 'shift') keys.shift = false;
+            else if (key in keys) keys[key] = false;
+            console.log('Key released:', e.key);
+        });
+
+        // Player Movement
+        function updatePlayer() {
+            if (keys.w && player.y > 0) player.y -= player.speed;
+            if (keys.s && player.y < canvas.height - player.height) player.y += player.speed;
+            if (keys.a && player.x > 0) player.x -= player.speed;
+            if (keys.d && player.x < canvas.width - player.width) player.x += player.speed;
+        }
+
+        // Player Shooting
+        function shoot() {
+            const now = Date.now();
+            if (keys.shift && now - lastShot >= fireRate) {
+                bullets.push({ 
+                    x: player.x + player.width / 2 - 10, 
+                    y: player.y - 20, 
+                    width: 20, 
+                    height: 40, 
+                    speed: 6, 
+                    color: 'yellow' 
+                });
+                lastShot = now;
+                console.log('Bullet fired at:', bullets[bullets.length - 1]);
+            }
+        }
+
+        // Bullet Mechanics
+        function updateBullets() {
+            bullets = bullets.filter(b => b.y > -b.height);
+            bullets.forEach(b => b.y -= b.speed);
+        }
+
+        // Enemy Spawns
+        function spawnEnemy() {
+            const baseSpawnRate = 0.02 * level;
+            if (Math.random() < baseSpawnRate) {
+                const x = Math.random() * (canvas.width - 50);
+                enemies.push({ 
+                    x, 
+                    y: -50, 
+                    width: 50, 
+                    height: 50, 
+                    speed: 2 + level * 0.5, 
+                    health: 1 + Math.floor(level / 2), 
+                    color: 'red', 
+                    type: 'regular', 
+                    img: enemyImg 
+                });
+            }
+            if (Math.random() < baseSpawnRate * 0.2) {
+                const x = Math.random() * (canvas.width - 80);
+                enemies.push({ 
+                    x, 
+                    y: -80, 
+                    width: 80, 
+                    height: 80, 
+                    speed: 1 + level * 0.3, 
+                    health: 5, 
+                    color: 'purple', 
+                    type: 'heavy', 
+                    img: heavyEnemyImg 
+                });
+                console.log('Heavy enemy spawned');
+            }
+        }
+
+        // Enemy Movement
+        function updateEnemies() {
+            enemies = enemies.filter(e => e.y < canvas.height && e.health > 0);
+            enemies.forEach(e => {
+                e.y += e.speed;
+                if (collides(player, e)) {
+                    player.lives--;
+                    enemies = enemies.filter(enemy => enemy !== e);
+                    if (player.lives <= 0) gameOver();
+                }
+            });
+        }
+
+        // Collision Detection
+        function collides(a, b) {
+            return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+        }
+
+        function checkCollisions() {
+            bullets.forEach(b => {
+                enemies.forEach(e => {
+                    if (collides(b, e)) {
+                        e.health--;
+                        bullets = bullets.filter(bullet => bullet !== b);
+                        if (e.health <= 0) {
+                            score += (e.type === 'heavy' ? 50 : 10) * level;
+                            enemies = enemies.filter(enemy => enemy !== e);
+                            if (score > highScore) highScore = score;
+                            if (score % 50 === 0) levelUp();
+                        }
+                    }
+                });
+            });
+        }
+
+        // Level Progression
+        function levelUp() {
+            level++;
+            ui.textContent = `Score: ${score} | Lives: ${player.lives} | High Score: ${highScore} | Level: ${level}`;
+        }
+
+        // Background Scrolling
+        function updateBackground() {
+            backgroundY += backgroundSpeed;
+            if (backgroundY >= canvas.height) {
+                backgroundY = 0;
+            }
+        }
+
+        // Drawing
+        function drawSprite(img, x, y, width, height, fallbackColor) {
+            if (img.complete && img.naturalWidth !== 0) {
+                ctx.drawImage(img, x, y, width, height);
+            } else {
+                ctx.fillStyle = fallbackColor;
+                ctx.fillRect(x, y, width, height);
+            }
+        }
+
+        function draw() {
+            if (backgroundImg.complete && backgroundImg.naturalWidth !== 0) {
+                ctx.drawImage(backgroundImg, 0, backgroundY, canvas.width, canvas.height);
+                ctx.drawImage(backgroundImg, 0, backgroundY - canvas.height, canvas.width, canvas.height);
+            } else {
+                ctx.fillStyle = '#222';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                console.log('Background image failed to load, using fallback');
+            }
+
+            drawSprite(playerImg, player.x, player.y, player.width, player.height, player.color);
+            bullets.forEach(b => drawSprite(bulletImg, b.x, b.y, b.width, b.height, b.color));
+            enemies.forEach(e => drawSprite(e.img, e.x, e.y, e.width, e.height, e.color));
+            ui.textContent = `Score: ${score} | Lives: ${player.lives} | High Score: ${highScore} | Level: ${level}`;
+        }
+
+        // Game Loop
+        function gameLoop() {
+            if (!gameRunning || paused) return;
+
+            updatePlayer();
+            shoot();
+            updateBullets();
+            spawnEnemy();
+            updateEnemies();
+            checkCollisions();
+            updateBackground();
+            draw();
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Game Controls
+        function startGame() {
+            console.log('Starting game');
+            gameRunning = true;
+            player = { x: canvas.width / 2 - 25, y: canvas.height - 60, width: 50, height: 50, speed: 4, lives: 3, color: 'blue' };
+            bullets = [];
+            enemies = [];
+            score = 0;
+            level = 1;
+            backgroundY = 0;
+            gameLoop();
+        }
+
+        function gameOver() {
+            gameRunning = false;
+            pauseMenu.style.display = 'block';
+            pauseMenu.innerHTML = `<h2>Game Over</h2><p>Score: ${score}</p><button onclick="restartGame()">Restart</button><br><button onclick="quitGame()">Quit</button>`;
+        }
+
+        function togglePause() {
+            paused = !paused;
+            pauseMenu.style.display = paused ? 'block' : 'none';
+            if (!paused) gameLoop();
+        }
+
+        function resumeGame() {
+            paused = false;
+            pauseMenu.style.display = 'none';
+            gameLoop();
+        }
+
+        function restartGame() {
+            pauseMenu.style.display = 'none';
+            startGame();
+        }
+
+        function quitGame() {
+            gameRunning = false;
+            pauseMenu.style.display = 'none';
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = 'white';
+            ctx.font = '30px Arial';
+            ctx.fillText('Thanks for playing!', canvas.width / 2 - 150, canvas.height / 2);
+        }
+
+        // Start Game
+        startGame();
+    </script>
+</body>
+</html>
+
